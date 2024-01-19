@@ -16,8 +16,8 @@
 using namespace std;
 
 //Using "const", the variable is shared into both gpu and cpu. 
-const int  NT = 64; //Num of the cuda threads.
-const int  NP = 1e3; //Particle number.
+const int  NT = 128; //Num of the cuda threads.
+const int  NP = 5e3; //Particle number.
 const int  NB = (NP+NT-1)/NT; //Num of the cuda blocks.
 const int  NN = 200; //nearest neighbor maximum numbers
 const double dt = 0.001;
@@ -34,6 +34,7 @@ const double tau_p = 200.;
 const double omega[] = {0.01, 0.1, 1, 3, 5};
 const double v0 = 1.0;
 const int position_interval = 0.1 / dt ; 
+const int time_interval = 10./dt;
 const int select_potential = 1; //0 is LJ, 1 is WCA
 
 //Initiallization of "curandState"
@@ -68,7 +69,7 @@ __global__ void langevin_kernel_cABP(double*x_dev,double*y_dev,double *vx_dev,do
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
   if(i_global<NP){
     //  printf("%d,%f\n",i_global,v_dev[i_global]);
-    
+    //if(i_global==0){printf("omega = %.3f\n", omega);}
     theta_dev[i_global] += noise_intensity*curand_normal(&state[i_global]) + omega*dt;
     
     theta_dev[i_global] = fmod(theta_dev[i_global], 2.0 * M_PI);
@@ -623,12 +624,12 @@ int main(int argc, char** argv){
   int *list_dev,*gate_dev, time_count, init_count;
   double *MSD_dev, *MSD_host, *ISF_dev,*ISF_host;
   double sampling_time, time_stamp=0.;
-  int ri=1000, rdf_count=0, si = 500;
+  int ri=1000, si = 500;
   double delta_r = 0.01;
   double *histogram, *rdf_dev, *rdf_host, *r_dev, *r_host;
   double *Sq_dev, *Sq_host, *q_dev, *q_host;
   double Sq_MPI[si], rdf_MPI[ri];
-  double sampling_time_max =1e4;
+  double sampling_time_max =5e3;
   curandState *state; //Cuda state for random numbers
   double sec; //measurred time
   double noise_intensity = sqrt(2.*zeta_zero*temp*dt); //Langevin noise intensity.  
@@ -708,29 +709,32 @@ int main(int argc, char** argv){
     }
   } 
   
+   for(int k =0; k<5; k++)
+  {
 
-int max_count = time_count;
-double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_count], MSD_MPI[time_count], ISF_MPI[time_count];
-  //Make the measure time table
-  time_count = 0.;
-  for(double t=dt;t<timemax;t+=dt){
-    if(int(t/dt)== int((sampling_time + time_stamp)/dt)){
-      count[time_count] = 0.;
-      MSD[time_count] = 0.;
-      ISF[time_count] = 0.;
-    	measure_time[time_count] = t - time_stamp;
-	sampling_time *=pow(10,0.1);
-	sampling_time=int(sampling_time/dt)*dt;
-	if(myrank==1){printf("%.5f	%d\n", measure_time[time_count], time_count);}
-	time_count++;
-	if(sampling_time > sampling_time_max/pow(10.,0.1)){
-	  time_stamp=0.;//reset the time stamp
-	  sampling_time=5.*dt; //reset the time sampling_time
-	  break;
+  int rdf_count=0;
+  int max_count = time_count;
+  double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_count], MSD_MPI[time_count], ISF_MPI[time_count];
+    //Make the measure time table
+    time_count = 0.;
+    for(double t=dt;t<timemax;t+=dt){
+      if(int(t/dt)== int((sampling_time + time_stamp)/dt)){
+        count[time_count] = 0.;
+        MSD[time_count] = 0.;
+        ISF[time_count] = 0.;
+        measure_time[time_count] = t - time_stamp;
+    sampling_time *=pow(10,0.1);
+    sampling_time=int(sampling_time/dt)*dt;
+    if(myrank==1){printf("%.5f	%d\n", measure_time[time_count], time_count);}
+    time_count++;
+    if(sampling_time > sampling_time_max/pow(10.,0.1)){
+      time_stamp=0.;//reset the time stamp
+      sampling_time=5.*dt; //reset the time sampling_time
+      break;
+        }
       }
     }
-  }
- 
+
   int rn_seed = rand()+myrank; 
   setCurand<<<NB,NT>>>(rn_seed, state); // Construction of the cudarand state.  
 
@@ -749,9 +753,7 @@ double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_co
   
   double dt_zero = 0.01;
   
-  for(int k =0; k<5 ; k++)
-  {
-    printf("omega = %.3f", omega[k]);
+
   for(double t=0;t<timeeq;t+=dt_zero){
     // cout<<t<<endl;
     calc_force_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);
@@ -827,7 +829,7 @@ double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_co
       }
     }
 
-    if( rounded_t % 2000 == 0 && init_count >= eq_count ){
+    if( rounded_t % 2000 == 0 && init_count >= eq_count){
       calculate_rdf<<<NB,NT>>>(x_dev, y_dev, LB, delta_r, r_dev, ri, histogram);
       calculate_structure_factor<<<NB,NT>>>(x_dev, y_dev, LB, q_dev, Sq_dev, si);
       rdf_count++;
@@ -840,7 +842,7 @@ double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_co
     // cout <<t<<endl;
     MPI_Barrier(MPI_COMM_WORLD);
 
-    if( rounded_t % 1000 == 0 && myrank==0 ){
+    if( rounded_t % time_interval == 0 && myrank==0 ){
       printf("time = %.2f\n",t);
       }
 
@@ -876,7 +878,6 @@ double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_co
 	MSD[i] = MSD_MPI[i]/(double)np;
 	ISF[i] = ISF_MPI[i]/(double)np;
    }
-
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -899,11 +900,10 @@ double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_co
     for (int i=0; i<si;i++){
 	    Sq_host[i] = Sq_MPI[i]/(double)np;
    }
+  output_Measure(measure_time, MSD, ISF, count, max_count, eq_count, ri, r_host, rdf_host, si, q_host, Sq_host, rdf_count, omega[k]); 
+  } 
 
-  output_Measure(measure_time, MSD, ISF, count, max_count, eq_count, ri, r_host, rdf_host, si, q_host, Sq_host, rdf_count, omega[k]);
-  }
-
-}
+} //omega for loop end
   //output(x,y,vx,vy,a);
   MPI_Barrier(MPI_COMM_WORLD);
   cudaFree(x_dev);
