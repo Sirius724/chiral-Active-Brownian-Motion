@@ -2,8 +2,11 @@
 
 - Equation of motion
   - chiral Active Brownian particle (cABP) : Adding constant angular velocity $\omega$ to ABP.
+  
 $\frac{dr_j}{dt} = \frac{1}{\zeta}F_j + v e_j$, $(e_j(\phi_j)) = (cos\theta_j, sin\theta_j)$
-$\frac{d'phi_j}{dt} = \sqrt{\frac{2}{\tau_P}}\eta_j(t) + \omega$, $\left< \eta_j(t)\eta_k(t') \right> = \delta_{jk}\delta (t-t')$
+
+
+$\frac{d\phi_j}{dt} = \sqrt{\frac{2}{\tau_P}}\eta_j(t) + \omega$, $\left< \eta_j(t)\eta_k(t') \right> = \delta_{jk}\delta (t-t')$
 
 
 
