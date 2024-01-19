@@ -1,0 +1,1 @@
+nvcc cABP_CUDA.cu  -o  cABP_CUDA.out -I/usr/lib/x86_64-linux-gnu/openmpi/include -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi
