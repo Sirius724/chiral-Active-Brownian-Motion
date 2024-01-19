@@ -10,7 +10,7 @@
   
   You can choose potentials between WCA and LJ.
   
-  And, I use CUDA (you must need nvidia GPU) and MPI.
+  And, I use __CUDA (you must need nvidia GPU) and MPI.__
   
   You should always check compiler's addresses. 
 
