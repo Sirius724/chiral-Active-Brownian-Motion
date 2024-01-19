@@ -10,4 +10,7 @@ $\frac{d\phi_j}{dt} = \sqrt{\frac{2}{\tau_P}}\eta_j(t) + \omega$, $\left< \eta_j
 
 You can choose potentials between WCA and LJ.
 
+And, I use CUDA (you must need nvidia GPU) and MPI.
+
+You should always check compiler's addresses. 
 
