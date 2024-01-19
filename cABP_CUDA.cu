@@ -21,7 +21,7 @@ const int  NP = 5e3; //Particle number.
 const int  NB = (NP+NT-1)/NT; //Num of the cuda blocks.
 const int  NN = 200; //nearest neighbor maximum numbers
 const double dt = 0.001;
-const int timemax = 1.5e4;
+const int timemax = 2e4;
 const int timeeq = 1000;
 //Langevin parameters
 const double zeta = 24.0;
@@ -691,7 +691,11 @@ int main(int argc, char** argv){
   cudaMalloc((void**)&gate_dev, sizeof(int)); // for update 
   cudaMalloc((void**)&list_dev,  NB * NT * NN* sizeof(int)); 
   cudaMalloc((void**)&state,  NB * NT * sizeof(curandState)); 
-
+   
+   
+   for(int k =0 ; k<5; k++)
+  {
+  time_stamp = 0.;
   sampling_time = 5.*dt;
   time_count = 0;
   
@@ -700,18 +704,16 @@ int main(int argc, char** argv){
 	sampling_time *=pow(10,0.1);
 	sampling_time=int(sampling_time/dt)*dt;
 	time_count++;
-	//printf("%.5f	%d\n",t, time_count);
+	printf("%.5f	%d\n",t, time_count);
 	if(sampling_time > sampling_time_max/pow(10.,0.1)){
 	  time_stamp=0.;
-	  sampling_time=5.*dt;
+	  sampling_time = 5.*dt;
 	  break;
       }
     }
   } 
   
-   for(int k =0; k<5; k++)
-  {
-
+  time_stamp = 0.;
   int rdf_count=0;
   int max_count = time_count;
   double measure_time[time_count], MSD[time_count], count[time_count], ISF[time_count], MSD_MPI[time_count], ISF_MPI[time_count];
@@ -725,7 +727,7 @@ int main(int argc, char** argv){
         measure_time[time_count] = t - time_stamp;
     sampling_time *=pow(10,0.1);
     sampling_time=int(sampling_time/dt)*dt;
-    if(myrank==1){printf("%.5f	%d\n", measure_time[time_count], time_count);}
+    if(myrank==0){printf("%.5f	%d\n", measure_time[time_count], time_count);}
     time_count++;
     if(sampling_time > sampling_time_max/pow(10.,0.1)){
       time_stamp=0.;//reset the time stamp
@@ -753,7 +755,6 @@ int main(int argc, char** argv){
   
   double dt_zero = 0.01;
   
-
   for(double t=0;t<timeeq;t+=dt_zero){
     // cout<<t<<endl;
     calc_force_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);
@@ -823,7 +824,7 @@ int main(int argc, char** argv){
       
 	    if(sampling_time > sampling_time_max/pow(10.,0.1)){
 	      time_stamp=t; //memory of initial measure time for logarithmic sampling
-	      sampling_time=5.*dt; //reset the time sampling_time
+	      sampling_time = 5.*dt; //reset the time sampling_time
 	      init_count++;
         time_count = 0;
       }
