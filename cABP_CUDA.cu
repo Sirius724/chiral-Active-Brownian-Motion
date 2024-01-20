@@ -17,7 +17,7 @@ using namespace std;
 
 //Using "const", the variable is shared into both gpu and cpu. 
 const int  NT = 128; //Num of the cuda threads.
-const int  NP = 5e3; //Particle number.
+const int  NP = 1e4; //Particle number.
 const int  NB = (NP+NT-1)/NT; //Num of the cuda blocks.
 const int  NN = 200; //nearest neighbor maximum numbers
 const double dt = 0.001;
@@ -35,7 +35,7 @@ const double omega[] = {0.01, 0.1, 1, 3, 5};
 const double v0 = 1.0;
 const int position_interval = 0.1 / dt ; 
 const int time_interval = 10./dt;
-const int select_potential = 1; //0 is LJ, 1 is WCA
+const int select_potential = 1; //0 is LJ, 1 is WCA, 2 is Harmonic
 
 //Initiallization of "curandState"
 __global__ void setCurand(unsigned long long seed, curandState *state){
@@ -279,7 +279,10 @@ __global__ void disp_gate_kernel(double LB,double *vx_dev,double *vy_dev,double 
 
 __global__ void disp_gate_kernel_cABP(double LB,double *vx_dev,double *vy_dev,double *dx_dev,double *dy_dev,int *gate_dev)
 {
-  double r2, cut = 3.0;  
+  double r2, cut;
+
+  if (select_potential ==0){cut = 3.0;}
+  else{cut = 1.0;}  
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
   
  if(i_global<NP){
@@ -515,12 +518,16 @@ void output_Measure(double *measure_time, double *MSD, double *ISF, double *coun
     sprintf(filename2,"data/LJ_rdf_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
     sprintf(filename3,"data/LJ_Sq_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
   }
-  else{
+  if(select_potential == 1){
     sprintf(filename,"data/WCA_MSD_ISF_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
     sprintf(filename2,"data/WCA_rdf_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
     sprintf(filename3,"data/WCA_Sq_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
   }
-
+ if(select_potential == 2){
+    sprintf(filename,"data/HP_MSD_ISF_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
+    sprintf(filename2,"data/HP_rdf_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
+    sprintf(filename3,"data/HP_Sq_MPI_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
+  }
 
   FILE *fp,*fp2, *fp3;
   fp = fopen(filename, "w+");
@@ -542,9 +549,9 @@ void output_Measure(double *measure_time, double *MSD, double *ISF, double *coun
   fclose(fp3);
 }
 
-int output(double *x,double *y, double *theta, double *vx, double *vy, double *r1, double t, double omega){
+int output(double *x,double *y, double *theta, double *vx, double *vy, double *r1, double t, double omega, int position_count){
   int i;
-  static int count = 0;
+  //static int count = 0;
   char filename[128], foldername[128];
   if (select_potential==0){
     sprintf(foldername, "position_LJ"); 
@@ -556,15 +563,20 @@ int output(double *x,double *y, double *theta, double *vx, double *vy, double *r
     {mkdir(foldername, 0755);}
     sprintf(foldername, "position_WCA/N%d_Pe%.1f_omega%.3f_phi%.2f", NP, tau_p, omega, rho);
   }
+  if (select_potential==2){
+    sprintf(foldername, "position_WCA");
+    {mkdir(foldername, 0755);}
+    sprintf(foldername, "position_HP/N%d_Pe%.1f_omega%.3f_phi%.2f", NP, tau_p, omega, rho);
+  }
 
   {mkdir(foldername, 0755);}
-  sprintf(filename,"%s/count_%d.dat",foldername, count);
+  sprintf(filename,"%s/count_%d.dat",foldername, position_count);
   ofstream file;
   file.open(filename);
   for(i=0;i<NP;i++)
     file << x[i] << " " << y[i]<< " " << theta[i] << " " << t << endl;
   file.close();
-  count++;
+  //count++;
   
   return 0;
 }
@@ -629,7 +641,7 @@ int main(int argc, char** argv){
   double *histogram, *rdf_dev, *rdf_host, *r_dev, *r_host;
   double *Sq_dev, *Sq_host, *q_dev, *q_host;
   double Sq_MPI[si], rdf_MPI[ri];
-  double sampling_time_max =5e3;
+  double sampling_time_max =8e3;
   curandState *state; //Cuda state for random numbers
   double sec; //measurred time
   double noise_intensity = sqrt(2.*zeta_zero*temp*dt); //Langevin noise intensity.  
@@ -778,10 +790,13 @@ int main(int argc, char** argv){
     output(x,y,theta,vx,vy,a,0.);
     }
   */
+
+ int position_count = 0;
   for(double t=dt;t<timemax;t+=dt){
     n++;
     if(select_potential == 0) {calc_force_LJ_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);}
     if(select_potential == 1) {calc_force_WCA_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);}
+    if(select_potential == 2) {calc_force_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);}
     langevin_kernel_cABP<<<NB,NT>>>(x_dev,y_dev,vx_dev,vy_dev,theta_dev, fx_dev, fy_dev,state, anglar_noise_intensity,LB, omega[k]);
     com_correction<<<NB,NT>>>(x_dev, y_dev, x_corr_dev, y_corr_dev, LB);
     //RDF, Sq measure
@@ -853,7 +868,8 @@ int main(int argc, char** argv){
       cudaMemcpy(x, x_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       cudaMemcpy(y, y_dev,  NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       cudaMemcpy(theta, theta_dev,  NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-      output(x,y,theta,vx,vy,a,t, omega[k]);
+      output(x,y,theta,vx,vy,a,t, omega[k],position_count);
+      position_count++;
       }
     MPI_Barrier(MPI_COMM_WORLD);  
   } 
