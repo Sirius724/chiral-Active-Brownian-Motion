@@ -21,7 +21,7 @@ const int  NP = 1e4; //Particle number.
 const int  NB = (NP+NT-1)/NT; //Num of the cuda blocks.
 const int  NN = 200; //nearest neighbor maximum numbers
 const double dt = 0.001;
-const int timemax = 2e4;
+const int timemax = 1e5;
 const int timeeq = 1000;
 //Langevin parameters
 const double zeta = 24.0;
@@ -31,7 +31,7 @@ const double rho = 0.4;
 const double RCHK = 4.0;
 const double rcut = 1.0;
 const double tau_p = 200.; 
-const double omega[] = {0.01, 0.1, 1, 3, 5};
+const double omega = 0.01;
 const double v0 = 1.0;
 const int position_interval = 0.1 / dt ; 
 const int time_interval = 10./dt;
@@ -89,8 +89,8 @@ __global__ void langevin_kernel_cABP(double*x_dev,double*y_dev,double *vx_dev,do
   }
 }
 
-__global__ void calc_force_WCA_kernel(double* x_dev, double* y_dev, double* fx_dev, double* fy_dev, double* a_dev, double LB, int* list_dev) {
-    double dx, dy, dU, a_ij, r2,r, w2, w6, cut;
+__global__ void calc_force_WCA_kernel(double* x_dev, double* y_dev, double* fx_dev, double* fy_dev, double* a_dev, double LB, int* list_dev, double *pot) {
+    double dx, dy, dU, a_ij, r2, w2, w6, cut;
     int i_global = threadIdx.x + blockIdx.x * blockDim.x;
 
     if (i_global < NP) {
@@ -116,13 +116,15 @@ __global__ void calc_force_WCA_kernel(double* x_dev, double* y_dev, double* fx_d
                 dU = -24.* w6 * (2.* w6 - 1.0) / r2 ;
                 fx_dev[i_global] += dU * dx;
                 fy_dev[i_global] += dU * dy;
+                pot[i_global] = 2. * (w6 * w6 - w6 + 0.25);
+                pot[i_global] /= (double) NP;
             }
         }
     }
 }
 
-__global__ void calc_force_LJ_kernel(double* x_dev, double* y_dev, double* fx_dev, double* fy_dev, double* a_dev, double LB, int* list_dev) {
-    double dx, dy, dU, a_ij, r2, r, w2, w6, cut;
+__global__ void calc_force_LJ_kernel(double* x_dev, double* y_dev, double* fx_dev, double* fy_dev, double* a_dev, double LB, int* list_dev, double *pot) {
+    double dx, dy, dU, a_ij, r2, w2, w6, cut;
     int i_global = threadIdx.x + blockIdx.x * blockDim.x;
     
     if (i_global < NP) {
@@ -149,6 +151,8 @@ __global__ void calc_force_LJ_kernel(double* x_dev, double* y_dev, double* fx_de
                     dU = - 24. * w6 * (2.* w6 - 1.0) / r2;
                     fx_dev[i_global] += dU * dx;
                     fy_dev[i_global] += dU * dy;
+                    pot[i_global] = 2. * (w6 * w6 - w6);
+                    pot[i_global] /= (double) NP;
                 }
             }
         }
@@ -353,9 +357,37 @@ __global__ void calc_force_kernel(double*x_dev,double*y_dev,double *fx_dev,doubl
   }
 }
 
+__global__ void calc_force_kernel_HP(double*x_dev,double*y_dev,double *fx_dev,double *fy_dev,double *a_dev,double LB,int *list_dev, double *pot){
+  double dx,dy,dr,dU,a_ij;
+  int i_global = threadIdx.x + blockIdx.x*blockDim.x;
+  //a_i  = a_dev[i_global];
+
+  if(i_global<NP){
+    fx_dev[i_global] = 0.0;
+    fy_dev[i_global] = 0.0;
+    for(int j = 1; j<=list_dev[NN*i_global]; j++){ //list[i][0]
+      dx=x_dev[list_dev[NN*i_global+j]]-x_dev[i_global]; //x[list[i][j]-x[i]
+      dy=y_dev[list_dev[NN*i_global+j]]-y_dev[i_global];
+      
+      dx -= LB*floor(dx/LB+0.5);
+      dy -= LB*floor(dy/LB+0.5);	
+      dr = sqrt(dx*dx+dy*dy);
+      a_ij=0.5*(a_dev[i_global]+a_dev[list_dev[NN*i_global+j]]);  //0.5*(a[i]+a[i][j])
+      if(dr < a_ij){ //cut off
+	      dU = -(1-dr/a_ij)/a_ij; //derivertive of U wrt r for harmonic potential.
+         fx_dev[i_global] += dU*dx/dr; //only deal for i_global, don't care the for "j"
+         fy_dev[i_global] += dU*dy/dr;
+         pot[i_global] = 0.25*(1-dr/a_ij)*(1-dr/a_ij);
+         pot[i_global] /= (double) NP;
+      }     
+    }
+    // printf("i=%d, fx=%f\n",i_global,fx_dev[i_global]);
+  }
+}
 
 
-__global__ void calc_force_BHHP_kernel(double*x_dev,double*y_dev,double *fx_dev,double *fy_dev,double *a_dev,double LB,int *list_dev){
+
+__global__ void calc_force_BHHP_kernel(double*x_dev,double*y_dev,double *fx_dev,double *fy_dev,double *a_dev,double LB,int *list_dev, double *pot){
   double dx,dy,dU,a_ij,r2, w2,w4,w12,cut;
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
   //a_i  = a_dev[i_global];
@@ -379,6 +411,7 @@ __global__ void calc_force_BHHP_kernel(double*x_dev,double*y_dev,double *fx_dev,
 	      dU = (-12.0)*w12/r2; //derivertive of U wrt r for harmonic potential.
          fx_dev[i_global] += dU*dx; //only deal for i_global, don't care the for "j"
          fy_dev[i_global] += dU*dy;
+         pot[i_global] = w12*0.5;
       }     
     }
     // printf("i=%d, fx=%f\n",i_global,fx_dev[i_global]);
@@ -549,9 +582,9 @@ void output_Measure(double *measure_time, double *MSD, double *ISF, double *coun
   fclose(fp3);
 }
 
-int output(double *x,double *y, double *theta, double *vx, double *vy, double *r1, double t, double omega, int position_count){
+int output(double *x,double *y, double *theta, double *vx, double *vy, double *r1, double t, double omega){
   int i;
-  //static int count = 0;
+  static int count = 0;
   char filename[128], foldername[128];
   if (select_potential==0){
     sprintf(foldername, "position_LJ"); 
@@ -570,14 +603,21 @@ int output(double *x,double *y, double *theta, double *vx, double *vy, double *r
   }
 
   {mkdir(foldername, 0755);}
-  sprintf(filename,"%s/count_%d.dat",foldername, position_count);
+  sprintf(filename,"%s/count_%d.dat",foldername, count);
   ofstream file;
   file.open(filename);
   for(i=0;i<NP;i++)
     file << x[i] << " " << y[i]<< " " << theta[i] << " " << t << endl;
   file.close();
-  //count++;
+  count++;
   
+  return 0;
+}
+
+int pot_output(double *pot){
+
+
+
   return 0;
 }
 
@@ -641,10 +681,12 @@ int main(int argc, char** argv){
   double *histogram, *rdf_dev, *rdf_host, *r_dev, *r_host;
   double *Sq_dev, *Sq_host, *q_dev, *q_host;
   double Sq_MPI[si], rdf_MPI[ri];
-  double sampling_time_max =8e3;
+  double pot, *pot_dev;
+  double sampling_time_max =1e4;
   curandState *state; //Cuda state for random numbers
   double sec; //measurred time
-  double noise_intensity = sqrt(2.*zeta_zero*temp*dt); //Langevin noise intensity.  
+  double dt_zero = 0.01;
+  double noise_intensity = sqrt(2.*zeta_zero*temp*dt_zero); //Langevin noise intensity.  
   double anglar_noise_intensity = sqrt(2./ tau_p * dt); 
   double LB = sqrt(M_PI*(1.0*1.0)*(double)NP/(4.* rho));  //system size
   int np,myrank; // the variable for MPI
@@ -675,6 +717,7 @@ int main(int argc, char** argv){
   Sq_host  = (double*)malloc(NB*NT*sizeof(double));
   q_host  = (double*)malloc(NB*NT*sizeof(double));
   theta = (double*)malloc(NB*NT*sizeof(double));
+  
   cudaMalloc((void**)&x_dev,  NB * NT * sizeof(double)); // CudaMalloc should be executed once in the host. 
   cudaMalloc((void**)&y_dev,  NB * NT * sizeof(double));
   cudaMalloc((void**)&theta_dev,  NB * NT * sizeof(double)); 
@@ -683,6 +726,7 @@ int main(int argc, char** argv){
   cudaMalloc((void**)&x0_dev,  NB * NT * sizeof(double)); 
   cudaMalloc((void**)&y0_dev,  NB * NT * sizeof(double)); 
   cudaMalloc((void**)&dx_dev,  NB * NT * sizeof(double)); 
+  cudaMalloc((void**)&pot_dev,  NB * NT * sizeof(double)); 
   cudaMalloc((void**)&dy_dev,  NB * NT * sizeof(double)); 
   cudaMalloc((void**)&vx_dev, NB * NT * sizeof(double)); 
   cudaMalloc((void**)&vy_dev, NB * NT * sizeof(double));
@@ -705,18 +749,25 @@ int main(int argc, char** argv){
   cudaMalloc((void**)&state,  NB * NT * sizeof(curandState)); 
    
    
-   for(int k =0 ; k<5; k++)
+   //for(int k =0 ; k<omega_number; k++)
   {
   time_stamp = 0.;
   sampling_time = 5.*dt;
   time_count = 0;
   
+	for (int i=0; i<ri;i++){
+        rdf_MPI[i]=0.;
+    }
+	for (int i=0; i<si;i++){
+	    Sq_MPI[i]=0.;
+   }
+
   for(double t=dt;t<timemax;t+=dt){
     if(int(t/dt)== int((sampling_time + time_stamp)/dt)){
 	sampling_time *=pow(10,0.1);
 	sampling_time=int(sampling_time/dt)*dt;
+  //printf("%.5f	%d\n",t, time_count);
 	time_count++;
-	printf("%.5f	%d\n",t, time_count);
 	if(sampling_time > sampling_time_max/pow(10.,0.1)){
 	  time_stamp=0.;
 	  sampling_time = 5.*dt;
@@ -739,7 +790,7 @@ int main(int argc, char** argv){
         measure_time[time_count] = t - time_stamp;
     sampling_time *=pow(10,0.1);
     sampling_time=int(sampling_time/dt)*dt;
-    if(myrank==0){printf("%.5f	%d\n", measure_time[time_count], time_count);}
+    //if(myrank==0){printf("%.5f	%d\n", measure_time[time_count], time_count);}
     time_count++;
     if(sampling_time > sampling_time_max/pow(10.,0.1)){
       time_stamp=0.;//reset the time stamp
@@ -749,6 +800,10 @@ int main(int argc, char** argv){
       }
     }
 
+	for (int i=0; i<max_count;i++){
+		MSD_MPI[i] = 0.;
+		ISF_MPI[i] = 0.;;
+   	}
   int rn_seed = rand()+myrank; 
   setCurand<<<NB,NT>>>(rn_seed, state); // Construction of the cudarand state.  
 
@@ -765,7 +820,7 @@ int main(int argc, char** argv){
   cudaMemcpy(a, a_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
   update<<<NB,NT>>>(LB,x_dev,y_dev,dx_dev,dy_dev,list_dev,gate_dev); 
   
-  double dt_zero = 0.01;
+  
   
   for(double t=0;t<timeeq;t+=dt_zero){
     // cout<<t<<endl;
@@ -778,8 +833,7 @@ int main(int argc, char** argv){
   measureTime();
   time_count = 0;
   init_count = 0;
-  int eq_count = 1;
-  int n = 0;
+  int eq_count = 3;
   /*
   if(myrank==0){
     //cudaMemcpy(vx, vx_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
@@ -791,13 +845,28 @@ int main(int argc, char** argv){
     }
   */
 
- int position_count = 0;
+
+
+  // cABP simulation start!!!!!!!!!
+  char pot_file[128];
+  mkdir("potential",0755);
+    if(select_potential==0){
+    sprintf(pot_file,"potential/LJ_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
+  }
+  if(select_potential == 1){
+    sprintf(pot_file,"potential/WCA_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
+  }
+ if(select_potential == 2){
+    sprintf(pot_file,"potential/HP_Pe%.4f_omega%.4f_rho%.4f.dat",tau_p,omega,rho);
+  }
+  FILE *fp4;
+  fp4 = fopen(pot_file,"w+");
+
   for(double t=dt;t<timemax;t+=dt){
-    n++;
-    if(select_potential == 0) {calc_force_LJ_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);}
-    if(select_potential == 1) {calc_force_WCA_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);}
-    if(select_potential == 2) {calc_force_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);}
-    langevin_kernel_cABP<<<NB,NT>>>(x_dev,y_dev,vx_dev,vy_dev,theta_dev, fx_dev, fy_dev,state, anglar_noise_intensity,LB, omega[k]);
+    if(select_potential == 0) {calc_force_LJ_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev, pot_dev);}
+    if(select_potential == 1) {calc_force_WCA_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev,pot_dev);}
+    if(select_potential == 2) {calc_force_kernel_HP<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev,pot_dev);}
+    langevin_kernel_cABP<<<NB,NT>>>(x_dev,y_dev,vx_dev,vy_dev,theta_dev, fx_dev, fy_dev,state, anglar_noise_intensity,LB, omega);
     com_correction<<<NB,NT>>>(x_dev, y_dev, x_corr_dev, y_corr_dev, LB);
     //RDF, Sq measure
     int rounded_t = int(t/dt + 0.5);
@@ -832,7 +901,7 @@ int main(int argc, char** argv){
 
       }
 
-      else {printf("time = %.4f\n", measure_time[time_count]);}
+      //else {printf("time = %.4f\n", measure_time[time_count]);}
 	    sampling_time *=pow(10,0.1);
 	    sampling_time=int(sampling_time/dt)*dt;
 	    time_count++;
@@ -858,8 +927,11 @@ int main(int argc, char** argv){
     // cout <<t<<endl;
     MPI_Barrier(MPI_COMM_WORLD);
 
-    if( rounded_t % time_interval == 0 && myrank==0 ){
+    if( rounded_t % time_interval == 0 && myrank==0){
       printf("time = %.2f\n",t);
+      pot = thrust::reduce(thrust::device_pointer_cast(pot_dev), thrust::device_pointer_cast(pot_dev + NB * NT),0.0,thrust::plus<double>());
+      
+      fprintf(fp4, "%.4f %.6f \n", t, pot);
       }
 
     if( rounded_t % position_interval == 0 && myrank==0 && t > timemax - 1e2){
@@ -868,11 +940,12 @@ int main(int argc, char** argv){
       cudaMemcpy(x, x_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       cudaMemcpy(y, y_dev,  NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       cudaMemcpy(theta, theta_dev,  NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-      output(x,y,theta,vx,vy,a,t, omega[k],position_count);
-      position_count++;
+      output(x,y,theta,vx,vy,a,t, omega);
       }
     MPI_Barrier(MPI_COMM_WORLD);  
   } 
+
+  fclose(fp4);
 
   sec = measureTime()/1000.;
   cout<<"time(sec):"<<sec<<endl;
@@ -917,11 +990,12 @@ int main(int argc, char** argv){
     for (int i=0; i<si;i++){
 	    Sq_host[i] = Sq_MPI[i]/(double)np;
    }
-  output_Measure(measure_time, MSD, ISF, count, max_count, eq_count, ri, r_host, rdf_host, si, q_host, Sq_host, rdf_count, omega[k]); 
+  output_Measure(measure_time, MSD, ISF, count, max_count, eq_count, ri, r_host, rdf_host, si, q_host, Sq_host, rdf_count, omega); 
   } 
 
 } //omega for loop end
   //output(x,y,vx,vy,a);
+  
   MPI_Barrier(MPI_COMM_WORLD);
   cudaFree(x_dev);
   cudaFree(xi_dev);
@@ -945,6 +1019,7 @@ int main(int argc, char** argv){
   cudaFree(state);
   cudaFree(a_dev);
   cudaFree(theta_dev);
+  cudaFree(pot_dev);
   free(x); 
   free(xi); 
   free(vx); 
