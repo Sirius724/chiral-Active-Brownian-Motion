@@ -22,11 +22,11 @@ const int  NB = (NP+NT-1)/NT; //Num of the cuda blocks.
 const int  NN = 200; //nearest neighbor maximum numbers
 const double dt_initial = 0.01;
 //const int timemax = 1e5;
-const int timeeq = 1000;
+const int timeeq = 100.;
 //Langevin parameters
 const double zeta = 1.0;
 const double zeta_zero = 1.;
-const double temp = 0.65;
+//const double temp = 0.65;
 const double epsilon = 1./24.;
 //const double rho = 0.4;
 const double RCHK = 4.0;
@@ -68,18 +68,17 @@ __global__ void langevin_kernel(double*x_dev,double*y_dev,double *vx_dev,double 
 __global__ void langevin_kernel_cABP(double*x_dev,double*y_dev,double *vx_dev,double *vy_dev, double *theta_dev, double *fx_dev,double *fy_dev,curandState *state, double noise_intensity,double LB, double omega, double dt){
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
   if(i_global<NP){
-    //  printf("%d,%f\n",i_global,v_dev[i_global]);
-    //if(i_global==0){printf("omega = %.3f\n", omega);}
-	vx_dev[i_global] = v0*cos(theta_dev[i_global]) + 1./zeta*fx_dev[i_global];
+    vx_dev[i_global] = v0*cos(theta_dev[i_global]) + 1./zeta*fx_dev[i_global];
     vy_dev[i_global] = v0*sin(theta_dev[i_global]) + 1./zeta*fy_dev[i_global];
     x_dev[i_global] += vx_dev[i_global]*dt;
     y_dev[i_global] += vy_dev[i_global]*dt;
 
     x_dev[i_global] -= LB*floor(x_dev[i_global]/LB);
     y_dev[i_global] -= LB*floor(y_dev[i_global]/LB);
+
     theta_dev[i_global] += noise_intensity*curand_normal(&state[i_global]) + omega*dt;
-	theta_dev[i_global] = fmod(theta_dev[i_global]+ 2 * M_PI, 2 * M_PI);
- 		//printf("%f\n",x_dev[i_global]);
+    theta_dev[i_global] -= 2.*M_PI*floor(theta_dev[i_global]/(2.*M_PI)+0.5);
+
   }
 }
 
@@ -152,23 +151,6 @@ __global__ void calc_force_LJ_kernel(double* x_dev, double* y_dev, double* fx_de
         }
     }
 }
-
-/*
-__global__ void langevin_kernel_nobound(double*x_dev,double*y_dev,double *vx_dev,double *vy_dev,double *fx_dev,double *fy_dev,curandState *state, double noise_intensity,double LB){
-  int i_global = threadIdx.x + blockIdx.x*blockDim.x;
-  if(i_global<NP){
-    //  printf("%d,%f\n",i_global,v_dev[i_global]);
-    vx_dev[i_global] += -zeta*vx_dev[i_global]*dt+ fx_dev[i_global]*dt + noise_intensity*curand_normal(&state[i_global]);
-    vy_dev[i_global] += -zeta*vy_dev[i_global]*dt+ fy_dev[i_global]*dt + noise_intensity*curand_normal(&state[i_global]);
-    x_dev[i_global] += vx_dev[i_global]*dt;
-    y_dev[i_global] += vy_dev[i_global]*dt;
-
-    //x_dev[i_global]  -= LB*floor(x_dev[i_global]/LB);
-    //y_dev[i_global]  -= LB*floor(y_dev[i_global]/LB);
-    //printf("%f\n",x_dev[i_global]);
-  }
-}
-*/
 
 __global__ void p_bound(double *x_dev, double *y_dev, double LB){
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
@@ -281,6 +263,7 @@ __global__ void disp_gate_kernel_cABP(double LB,double *vx_dev,double *vy_dev,do
   double r2, cut;
 
   if (select_potential ==0){cut = 3.0;}
+  if (select_potential ==1){cut = pow(2.0,1./6.);}
   else{cut = 1.0;}  
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
   
@@ -288,11 +271,8 @@ __global__ void disp_gate_kernel_cABP(double LB,double *vx_dev,double *vy_dev,do
     dx_dev[i_global]+=vx_dev[i_global]*dt; //particles dispacement update
     dy_dev[i_global]+=vy_dev[i_global]*dt;
     r2 = dx_dev[i_global]*dx_dev[i_global]+dy_dev[i_global]*dy_dev[i_global];
-    // printf("dr2=%d\n",dr2);
     if(r2> 0.25*(RCHK-cut)*(RCHK-cut)){ //threshold for update. rcut = potential cut distance.
-      //printf("i_global = %d\n", i_global);
       gate_dev[0]=1; //update's gate open!! many particle rewrite okay!
-      //printf("i=%d,dr=%f\n",i_global,sqrt(r2));
     }
   }
 }
@@ -317,7 +297,6 @@ __global__ void update(double LB,double *x_dev,double *y_dev,double *dx_dev,doub
           list_dev[NN*i_global+list_dev[NN*i_global]]=j; //list[i][list[i][0]] = j;
         }
       }
-    //  printf("i=%d, list=%d\n",i_global,list_dev[NN*i_global]);      
     dx_dev[i_global]=0.; //reset dx
     dy_dev[i_global]=0.; //
     if(i_global==0) //only first thread change to the gate value
@@ -380,8 +359,6 @@ __global__ void calc_force_kernel_HP(double*x_dev,double*y_dev,double *fx_dev,do
   }
 }
 
-
-
 __global__ void calc_force_BHHP_kernel(double*x_dev,double*y_dev,double *fx_dev,double *fy_dev,double *a_dev,double LB,int *list_dev, double *pot){
   double dx,dy,dU,a_ij,r2, w2,w4,w12,cut;
   int i_global = threadIdx.x + blockIdx.x*blockDim.x;
@@ -409,7 +386,6 @@ __global__ void calc_force_BHHP_kernel(double*x_dev,double*y_dev,double *fx_dev,
          pot[i_global] = w12*0.5;
       }     
     }
-    // printf("i=%d, fx=%f\n",i_global,fx_dev[i_global]);
   }
 }
 
@@ -447,7 +423,7 @@ __global__ void reduce_rdf(int ri, double *r, double *rdf_dev, double *histogram
 __global__ void calculate_structure_factor(double *x_dev, double *y_dev, double LB, double *q_dev, double *Sq_dev, int si){
 	int i_global = threadIdx.x + blockIdx.x*blockDim.x; 
 	int j;
-	double dq = 2.0 * M_PI / LB;
+	double dq =  2*M_PI / LB;
     double cos_sum = 0., sin_sum=0.;
     if(i_global<si){
         q_dev[i_global] = (double) i_global * dq;
@@ -456,7 +432,8 @@ __global__ void calculate_structure_factor(double *x_dev, double *y_dev, double 
             cos_sum += cos(arg) + cos(arg2);
             sin_sum += sin(arg) + sin(arg2);
         }
-        Sq_dev[i_global] += (cos_sum*cos_sum+sin_sum*sin_sum)/(double)(NP);
+        Sq_dev[i_global] += 0.5*(cos_sum*cos_sum+sin_sum*sin_sum)/(double)(NP);
+		if(i_global == 107){printf("sq_max = %.5f\n", (cos_sum*cos_sum+sin_sum*sin_sum)/(double)(NP));}
     }
 }
 
@@ -609,61 +586,6 @@ int output(double *x,double *y, double *theta, double *vx, double *vy, double *r
   return 0;
 }
 
-int pot_output(double *pot){
-
-
-
-  return 0;
-}
-
-/*
-int output_t(double *x,double *y, double t, double time_stamp, double x_corr,double y_corr, double K)
-{
-  int i;
-  char filename[64];
-  char filename2[64];
-  FILE *fp;
-  FILE *fp2;
-  char foldername[64];
-  sprintf(foldername, "position");
-  mkdir(foldername, 0755);
-  sprintf(filename,"%s/time_coord_%.3f.dat", foldername, temp);
-  fp=fopen(filename,"a+");
-
-  for(i=0;i<NP;i++)
-    fprintf(fp,"%f\t%f\t%f\n",t-time_stamp, x[i]-x_corr, y[i]-y_corr);
-  fclose(fp);
-
-  sprintf(filename2,"%s/time_energy_%.3f.dat", foldername, temp);
-  fp2=fopen(filename2,"a+");
-  fprintf(fp2,"%f\t%f\t%f\t%f\n", t-time_stamp, x_corr, y_corr, K);
-  fclose(fp2);
-
-  return 0;
-}
-*/
-
-/*
-void output(double *x,double *y,double *vx,double *vy,double *a){
-  static int count=1;
-  char filename[128];
-  sprintf(filename,"coord_%.d.dat",count);
-  ofstream file;
-  file.open(filename);
-  double temp0=0.0;
-  
-  for(int i=0;i<NP;i++){
-    file << x[i] << " " << y[i]<< " " << a[i] << endl;
-    temp0 += 0.5*(vx[i]*vx[i]+vy[i]*vy[i]);
-    //  cout <<vx[i]<<endl;
-  }
-  file.close();
-
-  cout<<"temp="<< temp0/NP <<endl;
-  count++;
-}*/
-
-
 int main(int argc, char** argv){
   double *x,*xi, *x_dev, *xi_dev, *x0_dev,*vx,*vx_dev, *y, *y_dev, *yi, *yi_dev, *y0_dev, *vy, *a, *dx_dev,*dy_dev,*vy_dev,*a_dev,*fx_dev,*fy_dev;
   double *theta, *theta_dev; 
@@ -697,28 +619,30 @@ int main(int argc, char** argv){
   sscanf(char_pot, "%d", &select_potential);
 
   int position_interval;
-  if (omega < 3.0){
-    dt = 0.001;
-    timemax = 1.e5;
-    eq_count = 6;
-    position_interval = 100./dt;
+  //if (omega < 3.0)
+  {
+    dt = 0.01;
+    timemax = 6.e5;
+    eq_count = 10;
+    position_interval = 1000./dt;
   }
 
-  else{
+  /*else{
     dt = 0.01;
     timemax = 1.e6;
     eq_count = 60;
     position_interval = 1000./dt;
-  }
+  }*/
 
-  position_start = timemax/2.0;
+  position_start = 1.e5;
+  double position_end = 6.e5;
 
   printf("Pe = %.4f, omega = %.4f, phi = %.4f, potential = %d, dt = %.4f, timemax = %d, eq_count = %d, position_start = %.1f \n", tau_p, omega, rho, select_potential, dt, timemax, eq_count, position_start);
 
   int time_interval = 10./dt;
   double sec; //measurred time
-  double noise_intensity = sqrt(2.*zeta_zero*temp*dt_initial); //Langevin noise intensity.  
-  double anglar_noise_intensity = sqrt(2./ tau_p * dt); 
+  //double noise_intensity = sqrt(2.*zeta_zero*temp*dt_initial); //Langevin noise intensity.  
+  double anglar_noise_intensity = sqrt(2.*dt/tau_p ); 
   double LB = sqrt(M_PI*(1.0*1.0)*(double)NP/(4.* rho));  //system size
   int np,myrank; // the variable for MPI
   
@@ -796,7 +720,6 @@ int main(int argc, char** argv){
     if(int(t/dt)== int((sampling_time + time_stamp)/dt)){
 	sampling_time *=pow(10,0.1);
 	sampling_time=int(sampling_time/dt)*dt;
-  //printf("%.5f	%d\n",t, time_count);
 	time_count++;
 	if(sampling_time > sampling_time_max/pow(10.,0.1)){
 	  time_stamp=0.;
@@ -818,22 +741,20 @@ int main(int argc, char** argv){
         MSD[time_count] = 0.;
         ISF[time_count] = 0.;
         measure_time[time_count] = t - time_stamp;
-    sampling_time *=pow(10,0.1);
-    sampling_time=int(sampling_time/dt)*dt;
-    //if(myrank==0){printf("%.5f	%d\n", measure_time[time_count], time_count);}
-    time_count++;
-    if(sampling_time > sampling_time_max/pow(10.,0.1)){
-      time_stamp=0.;//reset the time stamp
-      sampling_time=5.*dt; //reset the time sampling_time
+    	sampling_time *=pow(10,0.1);
+    	sampling_time=int(sampling_time/dt)*dt;
+    	time_count++;
+    	if(sampling_time > sampling_time_max/pow(10.,0.1)){
+      	  time_stamp=0.;//reset the time stamp
+      	  sampling_time=5.*dt; //reset the time sampling_time
       break;
         }
       }
-    }
-
-	for (int i=0; i<max_count;i++){
-		MSD_MPI[i] = 0.;
-		ISF_MPI[i] = 0.;;
-   	}
+    }	
+   for (int i=0; i<max_count;i++){
+      MSD_MPI[i] = 0.;
+      ISF_MPI[i] = 0.;;
+   }
   int rn_seed = rand()+myrank; 
   setCurand<<<NB,NT>>>(rn_seed, state); // Construction of the cudarand state.  
 
@@ -854,25 +775,14 @@ int main(int argc, char** argv){
     // cout<<t<<endl;
     calc_force_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev);
     langevin_kernel<<<NB,NT>>>(x_dev,y_dev,vx_dev,vy_dev,fx_dev,fy_dev,state,0.0,LB);
-    disp_gate_kernel<<<NB,NT>>>(LB,vx_dev,vy_dev,dx_dev,dy_dev,gate_dev, dt_initial); //for auto-list method
+    disp_gate_kernel<<<NB,NT>>>(LB,vx_dev,vy_dev,dx_dev,dy_dev,gate_dev,dt_initial); //for auto-list method
     update<<<NB,NT>>>(LB,x_dev,y_dev,dx_dev,dy_dev,list_dev,gate_dev);
   }
-  
+ 
   measureTime();
   time_count = 0;
   init_count = 0;
-
-  /*
-  if(myrank==0){
-    //cudaMemcpy(vx, vx_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-    //cudaMemcpy(vy, vy_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-    cudaMemcpy(x, x_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-    cudaMemcpy(y, y_dev,  NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-    cudaMemcpy(theta, theta_dev,  NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
-    output(x,y,theta,vx,vy,a,0.);
-    }
-  */
-
+ 
   // cABP simulation start!!!!!!!!!
   char pot_file[128];
   mkdir("potential",0755);
@@ -887,15 +797,15 @@ int main(int argc, char** argv){
   }
   FILE *fp4;
   fp4 = fopen(pot_file,"w+");
-
-
-
-  for(double t=dt;t<timemax;t+=dt){
+  int time_count2 =0;
+  for(double t=dt;t<=timemax;t+=dt){
+	time_count2++;
     if(select_potential == 0) {calc_force_LJ_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev, pot_dev);}
     if(select_potential == 1) {calc_force_WCA_kernel<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev,pot_dev);}
     if(select_potential == 2) {calc_force_kernel_HP<<<NB,NT>>>(x_dev,y_dev,fx_dev,fy_dev,a_dev,LB,list_dev,pot_dev);}
     langevin_kernel_cABP<<<NB,NT>>>(x_dev,y_dev,vx_dev,vy_dev,theta_dev, fx_dev, fy_dev,state, anglar_noise_intensity, LB, omega, dt);
     com_correction<<<NB,NT>>>(x_dev, y_dev, x_corr_dev, y_corr_dev, LB);
+    
     //RDF, Sq measure
     int rounded_t = int(t/dt + 0.5);
     if((int)(t / dt)== int((sampling_time + time_stamp)/dt)){
@@ -904,14 +814,11 @@ int main(int argc, char** argv){
       //cudaMemcpy(y_corr, y_corr_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       corr_x = thrust::reduce(thrust::device_pointer_cast(x_corr_dev), thrust::device_pointer_cast(x_corr_dev + NB * NT),0.0,thrust::plus<double>());
       corr_y = thrust::reduce(thrust::device_pointer_cast(y_corr_dev), thrust::device_pointer_cast(y_corr_dev + NB * NT),0.0,thrust::plus<double>());
-      //calc_com(x_corr, y_corr, &corr_x, &corr_y);
       cudaMemcpy(corr_x_dev, &corr_x, sizeof(double),cudaMemcpyHostToDevice);
       cudaMemcpy(corr_y_dev, &corr_y, sizeof(double),cudaMemcpyHostToDevice);
-      //cudaDeviceSynchronize();
 
       if(init_count >= eq_count){
         if(time_count==0){
-          //cudaDeviceSynchronize();
           copy_kernel2<<<NB,NT>>>(xi_dev, yi_dev, x_dev,y_dev, corr_x_dev, corr_y_dev);
         }
         MSD_ISF_device<<<NB,NT>>>(x_dev, y_dev, xi_dev, yi_dev, corr_x_dev, corr_y_dev, MSD_dev, ISF_dev, LB);
@@ -930,37 +837,30 @@ int main(int argc, char** argv){
       }
 
       //else {printf("time = %.4f\n", measure_time[time_count]);}
-	    sampling_time *=pow(10,0.1);
-	    sampling_time=int(sampling_time/dt)*dt;
-	    time_count++;
+	sampling_time *=pow(10,0.1);
+	sampling_time=int(sampling_time/dt)*dt;
+	time_count++;
       
-	    if(sampling_time > sampling_time_max/pow(10.,0.1)){
-	      time_stamp=t; //memory of initial measure time for logarithmic sampling
-	      sampling_time = 5.*dt; //reset the time sampling_time
-	      init_count++;
-        time_count = 0;
-      }
-    }
-
-   // if( rounded_t % 2000 == 0 && t >= position_start){
-   //       } 
+	if(sampling_time > sampling_time_max/pow(10.,0.1)){
+	  time_stamp=t; //memory of initial measure time for logarithmic sampling
+	  sampling_time = 5.*dt; //reset the time sampling_time
+	  init_count++;
+          time_count = 0;
+        }
+     }
 
     disp_gate_kernel_cABP<<<NB,NT>>>(LB,vx_dev,vy_dev,dx_dev,dy_dev,gate_dev, select_potential, dt); //for auto-list method
-    // cudaDeviceSynchronize(); // for printf in the device.
     update<<<NB,NT>>>(LB,x_dev,y_dev,dx_dev,dy_dev,list_dev,gate_dev);
-    // cudaDeviceSynchronize();
     // cout <<t<<endl;
     MPI_Barrier(MPI_COMM_WORLD);
 
-    if( rounded_t % time_interval == 0 && myrank==0){
+    if(rounded_t % time_interval == 0 && myrank==0){
       printf("time = %.2f\n",t);
       pot = thrust::reduce(thrust::device_pointer_cast(pot_dev), thrust::device_pointer_cast(pot_dev + NB * NT),0.0,thrust::plus<double>());
-      
       fprintf(fp4, "%.4f %.6f \n", t, pot);
       }
-
     
-    if( rounded_t % position_interval == 0 && myrank==0 && t >= position_start){
+    if( time_count2 % position_interval == 0 && myrank==0 && t >= position_start && t<= position_end){
       cudaMemcpy(vx, vx_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       cudaMemcpy(vy, vy_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
       cudaMemcpy(x, x_dev, NB * NT* sizeof(double),cudaMemcpyDeviceToHost);
@@ -970,6 +870,9 @@ int main(int argc, char** argv){
 	  calculate_rdf<<<NB,NT>>>(x_dev, y_dev, LB, delta_r, r_dev, ri, histogram);
       calculate_structure_factor<<<NB,NT>>>(x_dev, y_dev, LB, q_dev, Sq_dev, si);
       rdf_count++;
+      printf("position time = %.2f\n",t);
+      cudaDeviceSynchronize();
+	  time_count2 = 0;
       }
     MPI_Barrier(MPI_COMM_WORLD);  
   } 
@@ -1022,9 +925,7 @@ int main(int argc, char** argv){
   output_Measure(measure_time, MSD, ISF, count, max_count, eq_count, ri, r_host, rdf_host, si, q_host, Sq_host, rdf_count, omega, tau_p, rho, select_potential); 
   } 
 
-} //omega for loop end
-  //output(x,y,vx,vy,a);
-  
+} 
   MPI_Barrier(MPI_COMM_WORLD);
   cudaFree(x_dev);
   cudaFree(xi_dev);
