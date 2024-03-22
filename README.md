@@ -19,3 +19,4 @@
   
   I added the measurements that are radial distribution function, structure factor, mean square displacement, and Intermediate scattering function.
   
+- $\psi_6$ measure: nearest neighbor definition is the first minimum distance of RDF.
